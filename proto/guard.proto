@@ -1,0 +1,114 @@
+syntax = "proto3";
+
+package clawguard.v1;
+
+message Principal {
+    string agent_id = 1;
+    string role = 2;
+    string workspace_id = 3;
+    repeated string scopes = 4;
+    string session_token = 5;
+}
+
+message AccessRequestMsg {
+    Principal principal = 1;
+    string action = 2;
+    string resource_type = 3;
+    repeated string resource_ids = 4;
+    string task_type = 5;
+    float risk_score_hint = 6;
+    map<string, string> metadata = 7;
+    string request_id = 8;
+}
+
+message AccessResponseMsg {
+    string decision = 1;
+    string reason = 2;
+    repeated string redacted_fields = 3;
+    repeated string denied_resource_ids = 4;
+    float risk_score = 5;
+    string rule_id_matched = 6;
+    string request_id = 7;
+    int64 evaluated_at = 8;
+}
+
+message ToolCheckRequest {
+    Principal principal = 1;
+    string tool_name = 2;
+    string task_type = 3;
+    bytes tool_input_json = 4;
+    string request_id = 5;
+}
+
+message ToolCheckResponse {
+    bool permitted = 1;
+    string reason = 2;
+    bytes sanitised_input_json = 3;
+    float risk_score = 4;
+    string request_id = 5;
+}
+
+message BatchAccessRequest {
+    repeated AccessRequestMsg requests = 1;
+}
+
+message BatchAccessResponse {
+    repeated AccessResponseMsg responses = 1;
+}
+
+message ValidateTokenRequest {
+    string token = 1;
+    string workspace_id = 2;
+}
+
+message ValidateTokenResponse {
+    bool valid = 1;
+    Principal principal = 2;
+    int64 expires_at = 3;
+    repeated string scopes = 4;
+}
+
+message PolicyReloadRequest {
+    string workspace_id = 1;
+}
+
+message PolicyReloadResponse {
+    bool success = 1;
+    int32 rules_loaded = 2;
+    string policy_version = 3;
+}
+
+message AuditQueryRequest {
+    string workspace_id = 1;
+    string agent_id = 2;
+    int64 since_ts = 3;
+    int32 limit = 4;
+    string cursor = 5;
+}
+
+message AuditEntry {
+    string id = 1;
+    string agent_id = 2;
+    string action = 3;
+    string resource_type = 4;
+    string decision = 5;
+    float risk_score = 6;
+    int64 timestamp = 7;
+    string signature = 8;
+}
+
+message AuditQueryResponse {
+    repeated AuditEntry entries = 1;
+    string next_cursor = 2;
+    bool has_more = 3;
+}
+
+service GuardService {
+    rpc CheckAccess(AccessRequestMsg) returns (AccessResponseMsg);
+    rpc CheckAccessBatch(BatchAccessRequest) returns (BatchAccessResponse);
+    rpc CheckTool(ToolCheckRequest) returns (ToolCheckResponse);
+    rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
+    rpc ReloadPolicy(PolicyReloadRequest) returns (PolicyReloadResponse);
+    rpc StreamAuditLog(AuditQueryRequest) returns (stream AuditEntry);
+    rpc QueryAuditLog(AuditQueryRequest) returns (AuditQueryResponse);
+}

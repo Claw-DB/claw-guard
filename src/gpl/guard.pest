@@ -1,0 +1,81 @@
+// Guard Policy Language (GPL) PEG grammar for pest
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT = _{ "//" ~ (!"\n" ~ ANY)* }
+
+policy = { SOI ~ "policy" ~ string_lit ~ ("version" ~ integer_lit)? ~ "{" ~ rule_block* ~ "}" ~ EOI }
+
+rule_block = { effect_clause ~ "when" ~ "{" ~ condition* ~ "}" }
+
+effect_clause = {
+    "allow"
+  | "deny"
+  | "redact" ~ "fields" ~ "[" ~ (string_lit ~ ("," ~ string_lit)*)? ~ "]"
+  | "escalate" ~ ("reason" ~ string_lit)?
+  | "rate_limit" ~ integer_lit ~ "rpm"
+}
+
+condition = {
+    logical_condition
+  | subject_condition
+  | task_condition
+  | resource_condition
+  | risk_condition
+  | time_condition
+  | metadata_condition
+}
+
+subject_condition = {
+    "subject" ~ "role" ~ "is" ~ "not" ~ string_lit
+  | "subject" ~ "role" ~ "is" ~ string_lit
+  | "subject" ~ "agent" ~ "is" ~ "not" ~ string_lit
+  | "subject" ~ "agent" ~ "is" ~ string_lit
+  | "subject" ~ "scope" ~ "contains" ~ string_lit
+}
+
+task_condition = {
+    "task" ~ "is" ~ "not" ~ string_lit
+  | "task" ~ "is" ~ string_lit
+}
+
+resource_condition = {
+    "resource" ~ "type" ~ "is" ~ string_lit
+  | "resource" ~ "sensitivity" ~ "is" ~ sensitivity_level
+  | "resource" ~ "tag" ~ "contains" ~ string_lit
+}
+
+risk_condition = {
+    "risk" ~ "below" ~ float_lit
+  | "risk" ~ "above" ~ float_lit
+}
+
+time_condition = {
+    "time" ~ "between" ~ time_lit ~ "and" ~ time_lit
+  | "day" ~ "is" ~ weekday
+}
+
+metadata_condition = { "metadata" ~ identifier ~ "is" ~ string_lit }
+
+logical_condition = {
+    "not" ~ "(" ~ condition ~ ")"
+  | "and" ~ "{" ~ condition+ ~ "}"
+  | "or" ~ "{" ~ condition+ ~ "}"
+}
+
+sensitivity_level = { "restricted" | "confidential" | "internal" | "public" }
+
+action_type = { "read" | "write" | "delete" | "execute" | "admin" | "any" }
+
+weekday = { "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday" }
+
+time_lit = { ASCII_DIGIT{2} ~ ":" ~ ASCII_DIGIT{2} }
+
+string_lit = { "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+
+identifier = { ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+
+float_lit = { ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT* | ASCII_DIGIT+ }
+
+integer_lit = { ASCII_DIGIT+ }
+
+boolean = { "true" | "false" }
