@@ -4,6 +4,15 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
 description = "Security and policy engine for ClawDB"
+authors = ["ClawDB <info@clawdb.com>"]
+license = "MIT"
+license-file = "LICENSE"
+readme = "README.md"
+repository = "https://github.com/clawdb/claw-guard"
+homepage = "https://github.com/clawdb/claw-guard"
+keywords = ["clawdb", "security", "policy", "engine"]
+categories   = ["database", "embedded"]
+
 
 [lib]
 name = "claw_guard"
@@ -19,7 +28,7 @@ harness = false
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-tonic = "0.12"
+tonic = { version = "0.12", features = ["transport", "tls"] }
 prost = "0.13"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -28,7 +37,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "macros", "migrate", "chrono"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate", "chrono", "uuid", "json"] }
 jsonwebtoken = "9"
 blake3 = "1.5"
 zeroize = { version = "1", features = ["derive"] }
@@ -47,6 +56,8 @@ futures = "0.3"
 tokio-stream = "0.1"
 async-stream = "0.3"
 hex = "0.4"
+toml = "0.8"
+glob = "0.3"
 
 [build-dependencies]
 tonic-build = "0.12"
