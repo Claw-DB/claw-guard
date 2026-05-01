@@ -1,14 +1,16 @@
-#![allow(dead_code, unused_variables, unused_imports)]
-pub mod access;
 pub mod audit;
-pub mod auth;
 pub mod config;
-pub mod context;
-pub mod engine;
 pub mod error;
-pub mod governance;
-pub mod gpl;
+pub mod grpc;
+pub mod guard;
 pub mod masking;
 pub mod policy;
 pub mod proto;
-pub mod risk;
+pub mod session;
+
+pub use audit::{AuditEntry, AuditFilter, AuditReader, AuditWriter};
+pub use config::{GuardConfig, RiskThresholds, ZeroizeString};
+pub use guard::{AccessResult, Guard};
+pub use masking::{MaskDirective, MaskType, MaskingEngine};
+pub use policy::{Condition, EvalContext, PolicyDecision, PolicyEngine, PolicyRule};
+pub use session::{ClawSession, PaginatedSessions, SessionManager};
