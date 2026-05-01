@@ -1,25 +1,43 @@
-CREATE TABLE IF NOT EXISTS policies (
-    id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL,
-    name TEXT NOT NULL,
-    version INTEGER NOT NULL DEFAULT 1,
-    source_text TEXT NOT NULL,
-    compiled_json TEXT NOT NULL,
-    source_hash TEXT NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+-- SQLite-compatible schema for claw-guard
+
+CREATE TABLE IF NOT EXISTS roles (
+    id   TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
     description TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    scopes TEXT NOT NULL DEFAULT '[]'
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    id         TEXT PRIMARY KEY,
+    agent_id   TEXT NOT NULL,
+    role_id    TEXT NOT NULL REFERENCES roles(id),
+    scopes     TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    revoked    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS policies (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    description TEXT,
+    rules       TEXT NOT NULL DEFAULT '[]',
+    priority    INTEGER NOT NULL DEFAULT 0,
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS audit_log (
-    id TEXT PRIMARY KEY,
-    workspace_id TEXT NOT NULL,
-    agent_id TEXT NOT NULL,
-    action TEXT NOT NULL,
-    decision TEXT NOT NULL,
-    risk_score DOUBLE PRECISION NOT NULL DEFAULT 0.0,
-    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    sequence_num BIGSERIAL,
-    entry_json TEXT NOT NULL
+    id          TEXT PRIMARY KEY,
+    session_id  TEXT,
+    agent_id    TEXT,
+    action      TEXT NOT NULL,
+    resource    TEXT,
+    resource_id TEXT,
+    decision    TEXT NOT NULL,
+    reason      TEXT,
+    risk_score  REAL NOT NULL DEFAULT 0.0,
+    metadata    TEXT,
+    ts          TEXT NOT NULL
 );
