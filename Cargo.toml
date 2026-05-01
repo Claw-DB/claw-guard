@@ -6,12 +6,12 @@ rust-version = "1.75"
 description = "Security and policy engine for ClawDB"
 authors = ["ClawDB <info@clawdb.com>"]
 license = "MIT"
-license-file = "LICENSE"
 readme = "README.md"
 repository = "https://github.com/clawdb/claw-guard"
 homepage = "https://github.com/clawdb/claw-guard"
 keywords = ["clawdb", "security", "policy", "engine"]
 categories   = ["database", "embedded"]
+exclude      = ["/target", "*.pem", "*.key", "*.crt"]
 
 
 [lib]
