@@ -1,30 +1,40 @@
+use crate::error::{GuardError, GuardResult};
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
 use zeroize::Zeroize;
-use crate::error::{GuardError, GuardResult};
 
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct ZeroizeString(pub String);
 
 impl ZeroizeString {
-    pub fn new(s: impl Into<String>) -> Self { ZeroizeString(s.into()) }
+    pub fn new(s: impl Into<String>) -> Self {
+        ZeroizeString(s.into())
+    }
 }
 
 impl std::fmt::Debug for ZeroizeString {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("[REDACTED]") }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("[REDACTED]")
+    }
 }
 
 impl Deref for ZeroizeString {
     type Target = String;
-    fn deref(&self) -> &Self::Target { &self.0 }
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl DerefMut for ZeroizeString {
-    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 impl Drop for ZeroizeString {
-    fn drop(&mut self) { self.0.zeroize(); }
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -63,20 +73,44 @@ pub struct GuardConfig {
 
 impl GuardConfig {
     pub fn from_env() -> GuardResult<Self> {
-        let db_path = std::env::var("CLAW_GUARD_DB_PATH").unwrap_or_else(|_| "claw_guard.db".to_owned());
+        let db_path =
+            std::env::var("CLAW_GUARD_DB_PATH").unwrap_or_else(|_| "claw_guard.db".to_owned());
         let jwt_secret = ZeroizeString::new(
             std::env::var("CLAW_GUARD_JWT_SECRET")
                 .map_err(|_| GuardError::Config("CLAW_GUARD_JWT_SECRET is required".to_owned()))?,
         );
-        let policy_dir = PathBuf::from(std::env::var("CLAW_GUARD_POLICY_DIR").unwrap_or_else(|_| "policies".to_owned()));
-        let tls_cert_path = PathBuf::from(std::env::var("CLAW_GUARD_TLS_CERT_PATH").unwrap_or_else(|_| "certs/server.crt".to_owned()));
-        let tls_key_path = PathBuf::from(std::env::var("CLAW_GUARD_TLS_KEY_PATH").unwrap_or_else(|_| "certs/server.key".to_owned()));
+        let policy_dir = PathBuf::from(
+            std::env::var("CLAW_GUARD_POLICY_DIR").unwrap_or_else(|_| "policies".to_owned()),
+        );
+        let tls_cert_path = PathBuf::from(
+            std::env::var("CLAW_GUARD_TLS_CERT_PATH")
+                .unwrap_or_else(|_| "certs/server.crt".to_owned()),
+        );
+        let tls_key_path = PathBuf::from(
+            std::env::var("CLAW_GUARD_TLS_KEY_PATH")
+                .unwrap_or_else(|_| "certs/server.key".to_owned()),
+        );
         let thresholds = RiskThresholds {
-            write_weight: parse_env_f64("CLAW_GUARD_RISK_THRESHOLDS_WRITE_WEIGHT", RiskThresholds::default().write_weight)?,
-            delete_weight: parse_env_f64("CLAW_GUARD_RISK_THRESHOLDS_DELETE_WEIGHT", RiskThresholds::default().delete_weight)?,
-            sensitive_weight: parse_env_f64("CLAW_GUARD_RISK_THRESHOLDS_SENSITIVE_WEIGHT", RiskThresholds::default().sensitive_weight)?,
-            off_hours_weight: parse_env_f64("CLAW_GUARD_RISK_THRESHOLDS_OFF_HOURS_WEIGHT", RiskThresholds::default().off_hours_weight)?,
-            deny_threshold: parse_env_f64("CLAW_GUARD_RISK_THRESHOLDS_DENY_THRESHOLD", RiskThresholds::default().deny_threshold)?,
+            write_weight: parse_env_f64(
+                "CLAW_GUARD_RISK_THRESHOLDS_WRITE_WEIGHT",
+                RiskThresholds::default().write_weight,
+            )?,
+            delete_weight: parse_env_f64(
+                "CLAW_GUARD_RISK_THRESHOLDS_DELETE_WEIGHT",
+                RiskThresholds::default().delete_weight,
+            )?,
+            sensitive_weight: parse_env_f64(
+                "CLAW_GUARD_RISK_THRESHOLDS_SENSITIVE_WEIGHT",
+                RiskThresholds::default().sensitive_weight,
+            )?,
+            off_hours_weight: parse_env_f64(
+                "CLAW_GUARD_RISK_THRESHOLDS_OFF_HOURS_WEIGHT",
+                RiskThresholds::default().off_hours_weight,
+            )?,
+            deny_threshold: parse_env_f64(
+                "CLAW_GUARD_RISK_THRESHOLDS_DENY_THRESHOLD",
+                RiskThresholds::default().deny_threshold,
+            )?,
         };
         let sensitive_resources = std::env::var("CLAW_GUARD_SENSITIVE_RESOURCES")
             .unwrap_or_default()

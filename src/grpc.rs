@@ -13,9 +13,9 @@ use crate::proto::guard::{
     guard_service_server::{GuardService, GuardServiceServer},
     AddPolicyRequest, AddPolicyResponse, AuditEntry as AuditEntryMsg, CheckAccessRequest,
     CheckAccessResponse, CreateSessionRequest, CreateSessionResponse, ListPoliciesRequest,
-    ListPoliciesResponse, Policy, QueryAuditLogRequest, QueryAuditLogResponse,
-    RemovePolicyRequest, RemovePolicyResponse, RevokeSessionRequest, RevokeSessionResponse,
-    ValidateSessionRequest, ValidateSessionResponse,
+    ListPoliciesResponse, Policy, QueryAuditLogRequest, QueryAuditLogResponse, RemovePolicyRequest,
+    RemovePolicyResponse, RevokeSessionRequest, RevokeSessionResponse, ValidateSessionRequest,
+    ValidateSessionResponse,
 };
 
 #[derive(Clone)]
@@ -42,7 +42,12 @@ impl GuardService for GrpcGuardService {
         let payload = request.into_inner();
         let result = self
             .guard
-            .check_access_with_task(&payload.session_token, &payload.action, &payload.resource, &payload.task)
+            .check_access_with_task(
+                &payload.session_token,
+                &payload.action,
+                &payload.resource,
+                &payload.task,
+            )
             .await
             .map_err(Status::from)?;
         let response = match result {
@@ -59,7 +64,10 @@ impl GuardService for GrpcGuardService {
             AccessResult::Masked { fields } => CheckAccessResponse {
                 decision: "mask".to_owned(),
                 reason: String::new(),
-                masked_fields: fields.into_iter().map(|field| field.field_pattern).collect(),
+                masked_fields: fields
+                    .into_iter()
+                    .map(|field| field.field_pattern)
+                    .collect(),
             },
         };
         Ok(Response::new(response))
@@ -74,7 +82,8 @@ impl GuardService for GrpcGuardService {
             .guard
             .session_manager
             .create_session(
-                Uuid::parse_str(&payload.agent_id).map_err(|error| Status::invalid_argument(error.to_string()))?,
+                Uuid::parse_str(&payload.agent_id)
+                    .map_err(|error| Status::invalid_argument(error.to_string()))?,
                 &payload.role,
                 payload.scopes,
                 payload.ttl_secs,
@@ -197,11 +206,7 @@ impl GuardService for GrpcGuardService {
             resource: (!payload.resource.is_empty()).then_some(payload.resource),
             limit: (payload.limit > 0).then_some(payload.limit),
         };
-        let audit_entries = self
-            .guard
-            .query_audit(filter)
-            .await
-            .map_err(|error| Status::from(error))?;
+        let audit_entries = self.guard.query_audit(filter).await.map_err(Status::from)?;
         let entries: Vec<AuditEntryMsg> = audit_entries
             .into_iter()
             .map(|entry| AuditEntryMsg {
@@ -217,7 +222,8 @@ impl GuardService for GrpcGuardService {
                 decision: entry.decision,
                 reason: entry.reason.unwrap_or_default(),
                 risk_score: entry.risk_score,
-                metadata_json: serde_json::to_string(&entry.metadata).unwrap_or_else(|_| "{}".to_owned()),
+                metadata_json: serde_json::to_string(&entry.metadata)
+                    .unwrap_or_else(|_| "{}".to_owned()),
                 ts: entry.ts.timestamp(),
             })
             .collect();

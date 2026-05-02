@@ -200,8 +200,12 @@ impl SessionManager {
             })
             .collect::<GuardResult<Vec<_>>>()?;
 
-        let next_offset = (!sessions.is_empty() && sessions.len() as u64 == limit).then_some(offset + limit);
-        Ok(PaginatedSessions { sessions, next_offset })
+        let next_offset =
+            (!sessions.is_empty() && sessions.len() as u64 == limit).then_some(offset + limit);
+        Ok(PaginatedSessions {
+            sessions,
+            next_offset,
+        })
     }
 
     async fn ensure_role(&self, role: &str, scopes: &[String]) -> GuardResult<Uuid> {

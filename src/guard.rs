@@ -65,8 +65,14 @@ impl Guard {
         self.config.as_ref()
     }
 
-    pub async fn check_access(&self, session_token: &str, action: &str, resource: &str) -> GuardResult<AccessResult> {
-        self.check_access_with_task(session_token, action, resource, action).await
+    pub async fn check_access(
+        &self,
+        session_token: &str,
+        action: &str,
+        resource: &str,
+    ) -> GuardResult<AccessResult> {
+        self.check_access_with_task(session_token, action, resource, action)
+            .await
     }
 
     pub async fn check_access_with_task(
@@ -101,8 +107,15 @@ impl Guard {
                     PolicyDecision::Deny { reason } => AccessResult::Denied { reason },
                     PolicyDecision::Mask { fields } => AccessResult::Masked { fields },
                 };
-                self.write_audit(Some(&session), action, resource, &access_result, risk_score, now)
-                    .await?;
+                self.write_audit(
+                    Some(&session),
+                    action,
+                    resource,
+                    &access_result,
+                    risk_score,
+                    now,
+                )
+                .await?;
                 access_result
             }
             Err(error) => {
@@ -118,7 +131,11 @@ impl Guard {
         Ok(result)
     }
 
-    pub async fn check_tool_permission(&self, session_token: &str, tool_name: &str) -> GuardResult<bool> {
+    pub async fn check_tool_permission(
+        &self,
+        session_token: &str,
+        tool_name: &str,
+    ) -> GuardResult<bool> {
         let session = self.session_manager.validate_session(session_token).await?;
         Ok(session
             .scopes
@@ -220,7 +237,11 @@ mod tests {
         fs::create_dir_all(&policy_dir).expect("policy dir should exist");
         fs::write(policy_dir.join("base.toml"), policy_toml).expect("policy should be written");
         let config = GuardConfig {
-            db_path: temp_dir.path().join("guard.db").to_string_lossy().to_string(),
+            db_path: temp_dir
+                .path()
+                .join("guard.db")
+                .to_string_lossy()
+                .to_string(),
             jwt_secret: ZeroizeString::new("secret"),
             policy_dir: policy_dir.clone(),
             tls_cert_path: temp_dir.path().join("server.crt"),
@@ -230,7 +251,10 @@ mod tests {
             audit_flush_interval_ms: 25,
             audit_batch_size: 8,
         };
-        (Guard::new(config).await.expect("guard should build"), temp_dir)
+        (
+            Guard::new(config).await.expect("guard should build"),
+            temp_dir,
+        )
     }
 
     #[tokio::test]

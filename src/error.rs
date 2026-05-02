@@ -19,7 +19,10 @@ pub enum GuardError {
     #[error("session not found: {0}")]
     SessionNotFound(Uuid),
     #[error("session expired: {session_id} at {expired_at}")]
-    SessionExpired { session_id: Uuid, expired_at: DateTime<Utc> },
+    SessionExpired {
+        session_id: Uuid,
+        expired_at: DateTime<Utc>,
+    },
     #[error("session revoked: {0}")]
     SessionRevoked(Uuid),
     #[error("audit log failed: {0}")]
@@ -50,10 +53,18 @@ impl From<GuardError> for tonic::Status {
     fn from(err: GuardError) -> Self {
         match &err {
             GuardError::AccessDenied(_) => tonic::Status::permission_denied(err.to_string()),
-            GuardError::TokenInvalid(_) | GuardError::TokenExpired { .. } => tonic::Status::unauthenticated(err.to_string()),
-            GuardError::PolicyNotFound(_) | GuardError::SessionNotFound(_) | GuardError::SessionRevoked(_) => tonic::Status::not_found(err.to_string()),
-            GuardError::PolicyParse(_) | GuardError::InvalidCondition(_) | GuardError::Config(_) => tonic::Status::invalid_argument(err.to_string()),
-            GuardError::Database(_) | GuardError::Io(_) | GuardError::Transport(_) => tonic::Status::unavailable(err.to_string()),
+            GuardError::TokenInvalid(_) | GuardError::TokenExpired { .. } => {
+                tonic::Status::unauthenticated(err.to_string())
+            }
+            GuardError::PolicyNotFound(_)
+            | GuardError::SessionNotFound(_)
+            | GuardError::SessionRevoked(_) => tonic::Status::not_found(err.to_string()),
+            GuardError::PolicyParse(_)
+            | GuardError::InvalidCondition(_)
+            | GuardError::Config(_) => tonic::Status::invalid_argument(err.to_string()),
+            GuardError::Database(_) | GuardError::Io(_) | GuardError::Transport(_) => {
+                tonic::Status::unavailable(err.to_string())
+            }
             _ => tonic::Status::internal(err.to_string()),
         }
     }
