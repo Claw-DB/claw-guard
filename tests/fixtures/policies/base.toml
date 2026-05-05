@@ -1,0 +1,18 @@
+[[policies]]
+name = "allow-admin-users"
+priority = 100
+
+[[policies.rules]]
+type = "allow_if"
+[policies.rules.condition]
+role_is = "admin"
+
+[[policies]]
+name = "deny-finance-during-scheduling"
+priority = 90
+
+[[policies.rules]]
+type = "deny_if"
+reason = "Finance data not accessible during scheduling tasks"
+[policies.rules.condition]
+and = [{ task_matches = "scheduling" }, { resource_is = "finance_records" }]
