@@ -1,17 +1,17 @@
 [package]
 name = "claw-guard"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 rust-version = "1.75"
-description = "Security and policy engine for ClawDB"
-authors = ["Tomiwa Adeyemi <adeyemitomiwa7@gmail.com>"]
-license = "MIT"
+description = "Security, session, and policy engine for ClawDB."
+license = "Apache-2.0"
 readme = "README.md"
-repository = "https://github.com/clawdb/claw-guard"
-homepage = "https://github.com/clawdb/claw-guard"
-keywords = ["clawdb", "security", "policy", "engine"]
-categories   = ["database", "embedded"]
-exclude      = ["/target", "*.pem", "*.key", "*.crt"]
+repository = "https://github.com/Claw-DB/claw-guard"
+homepage = "https://github.com/Claw-DB/claw-guard"
+documentation = "https://docs.rs/claw-guard"
+keywords = ["security", "policy", "auth", "agents", "clawdb"]
+categories = ["authentication", "database"]
+exclude = ["target/", ".github/", "benches/"]
 
 
 [lib]
@@ -41,6 +41,9 @@ chrono = { version = "0.4", features = ["serde"] }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate", "chrono", "uuid", "json"] }
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 blake3 = "1.5"
+base64 = "0.22"
+rand = "0.8"
+secrecy = "0.10"
 zeroize = { version = "1", features = ["derive"] }
 dashmap = "6"
 arc-swap = "1"

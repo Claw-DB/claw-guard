@@ -383,12 +383,13 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "claw-guard"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "arc-swap",
  "async-stream",
  "async-trait",
  "backoff",
+ "base64",
  "blake3",
  "bytes",
  "chrono",
@@ -402,9 +403,11 @@ dependencies = [
  "pest",
  "pest_derive",
  "prost",
+ "rand 0.8.6",
  "regex",
  "reqwest",
  "rstest",
+ "secrecy",
  "serde",
  "serde_json",
  "sqlx",
@@ -2680,6 +2683,15 @@ dependencies = [
  "generic-array",
  "pkcs8",
  "subtle",
+ "zeroize",
+]
+
+[[package]]
+name = "secrecy"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e891af845473308773346dc847b2c23ee78fe442e0472ac50e22a18a93d3ae5a"
+dependencies = [
  "zeroize",
 ]
 

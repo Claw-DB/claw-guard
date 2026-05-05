@@ -1,34 +1,34 @@
+use std::path::Path;
 use std::sync::Arc;
 
-use chrono::{Local, Timelike, Utc};
+use chrono::Utc;
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use uuid::Uuid;
 
-use crate::audit::{AuditEntry, AuditFilter, AuditReader, AuditWriter};
+use crate::audit::{write_direct, AuditEntry, AuditFilter, AuditReader, AuditWriter};
 use crate::config::GuardConfig;
 use crate::error::GuardResult;
-use crate::masking::{MaskDirective, MaskingEngine};
-use crate::policy::{EvalContext, PolicyDecision, PolicyEngine};
-use crate::session::{ClawSession, SessionManager};
+use crate::keys::ApiKeyManager;
+use crate::masking::MaskingEngine;
+use crate::policy::{EvalContext, PolicyEngine};
+use crate::session::SessionManager;
+use crate::types::{AccessResult, GuardSession, PolicyDecision};
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum AccessResult {
-    Allowed,
-    Denied { reason: String },
-    Masked { fields: Vec<MaskDirective> },
-}
-
+/// Main public entry point for ClawDB security checks.
 #[derive(Clone)]
 pub struct Guard {
-    config: Arc<GuardConfig>,
     pool: SqlitePool,
-    pub policy_engine: PolicyEngine,
-    pub session_manager: SessionManager,
-    pub audit_writer: AuditWriter,
-    pub audit_reader: AuditReader,
+    keys: ApiKeyManager,
+    sessions: SessionManager,
+    policy: PolicyEngine,
+    masking: MaskingEngine,
+    audit: AuditWriter,
+    audit_reader: AuditReader,
+    config: Arc<GuardConfig>,
 }
 
 impl Guard {
+    /// Opens the SQLite pool, applies migrations, and initializes guard services.
     pub async fn new(config: GuardConfig) -> GuardResult<Self> {
         let config = Arc::new(config);
         let pool = SqlitePoolOptions::new()
@@ -37,282 +37,161 @@ impl Guard {
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
 
-        let policy_engine = PolicyEngine::new(pool.clone(), config.policy_dir.clone());
-        let _ = policy_engine.reload_policies_from_dir().await?;
-        let session_manager = SessionManager::new(pool.clone(), config.clone());
-        let audit_writer = AuditWriter::new(
+        let policy = PolicyEngine::new(pool.clone(), config.clone());
+        if let Some(policy_dir) = &config.policy_dir {
+            policy.load_from_dir(policy_dir).await?;
+        }
+
+        let audit = AuditWriter::new(
             pool.clone(),
             tokio::time::Duration::from_millis(config.audit_flush_interval_ms),
             config.audit_batch_size,
         );
-        let audit_reader = AuditReader::new(pool.clone());
 
         Ok(Self {
-            config,
+            keys: ApiKeyManager::new(pool.clone()),
+            sessions: SessionManager::new(pool.clone(), config.clone()),
+            policy,
+            masking: MaskingEngine::new(),
+            audit,
+            audit_reader: AuditReader::new(pool.clone()),
             pool,
-            policy_engine,
-            session_manager,
-            audit_writer,
-            audit_reader,
+            config,
         })
     }
 
-    pub fn pool(&self) -> &SqlitePool {
-        &self.pool
+    /// Returns the shared API key manager.
+    pub fn keys(&self) -> &ApiKeyManager {
+        &self.keys
     }
 
+    /// Returns the shared session manager.
+    pub fn sessions(&self) -> &SessionManager {
+        &self.sessions
+    }
+
+    /// Returns the policy engine.
+    pub fn policy_engine(&self) -> &PolicyEngine {
+        &self.policy
+    }
+
+    /// Returns the configured masking engine.
+    pub fn masking_engine(&self) -> &MaskingEngine {
+        &self.masking
+    }
+
+    /// Returns the guard configuration.
     pub fn config(&self) -> &GuardConfig {
         self.config.as_ref()
     }
 
+    /// Returns the underlying SQLite pool.
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
+    /// Evaluates a session, action, and resource triplet.
     pub async fn check_access(
         &self,
-        session_token: &str,
+        session: &GuardSession,
         action: &str,
         resource: &str,
     ) -> GuardResult<AccessResult> {
-        self.check_access_with_task(session_token, action, resource, action)
+        self.check_access_with_task(session, action, resource, action)
             .await
     }
 
+    /// Evaluates access with an explicit task name.
     pub async fn check_access_with_task(
         &self,
-        session_token: &str,
+        session: &GuardSession,
         action: &str,
         resource: &str,
         task: &str,
     ) -> GuardResult<AccessResult> {
-        let now = Utc::now();
-        let validated = self.session_manager.validate_session(session_token).await;
+        let base_entry = AuditEntry {
+            id: Uuid::new_v4(),
+            session_id: Some(session.id),
+            workspace_id: session.workspace_id,
+            agent_id: Some(session.agent_id),
+            action: action.to_owned(),
+            resource: resource.to_owned(),
+            resource_id: None,
+            decision: String::new(),
+            reason: None,
+            risk_score: 0.0,
+            metadata: serde_json::json!({}),
+            ts: Utc::now(),
+        };
 
-        let result = match validated {
-            Ok(session) => {
-                let risk_score = self.score_risk(action, resource);
-                let context = EvalContext {
+        match self.sessions.assert_session_active(session).await {
+            Ok(()) => {
+                let mut ctx = EvalContext {
                     agent_id: session.agent_id,
+                    workspace_id: session.workspace_id,
                     role: session.role.clone(),
                     scopes: session.scopes.clone(),
                     task: task.to_owned(),
                     resource: resource.to_owned(),
-                    risk_score,
+                    action: action.to_owned(),
+                    risk_score: 0.0,
                 };
-                let mut decision = self.policy_engine.evaluate(&context).await?;
-                if risk_score >= self.config.risk_thresholds.deny_threshold {
-                    decision = PolicyDecision::Deny {
-                        reason: format!("risk score {risk_score:.2} exceeded threshold"),
-                    };
-                }
-                let access_result = match decision {
-                    PolicyDecision::Allow => AccessResult::Allowed,
-                    PolicyDecision::Deny { reason } => AccessResult::Denied { reason },
-                    PolicyDecision::Mask { fields } => AccessResult::Masked { fields },
-                };
-                self.write_audit(
-                    Some(&session),
-                    action,
-                    resource,
-                    &access_result,
-                    risk_score,
-                    now,
-                )
-                .await?;
-                access_result
+                ctx.risk_score = self.policy.compute_risk(&ctx);
+                let decision = self.policy.evaluate(&ctx).await?;
+                self.write_audit(base_entry, &decision, ctx.risk_score)
+                    .await?;
+                Ok(decision)
             }
             Err(error) => {
-                let access_result = AccessResult::Denied {
+                let decision = PolicyDecision::Deny {
                     reason: error.to_string(),
                 };
-                self.write_audit(None, action, resource, &access_result, 1.0, now)
-                    .await?;
-                return Err(error);
+                self.write_audit(base_entry, &decision, 1.0).await?;
+                Err(error)
             }
-        };
-
-        Ok(result)
+        }
     }
 
-    pub async fn check_tool_permission(
-        &self,
-        session_token: &str,
-        tool_name: &str,
-    ) -> GuardResult<bool> {
-        let session = self.session_manager.validate_session(session_token).await?;
-        Ok(session
+    /// Checks whether a session grants permission to use a tool.
+    pub fn check_tool_permission(&self, session: &GuardSession, tool_name: &str) -> bool {
+        session
             .scopes
             .iter()
-            .any(|scope| scope == "tool:*" || scope == &format!("tool:{tool_name}")))
+            .any(|scope| scope == "tool:*" || scope == &format!("tool:{tool_name}"))
     }
 
-    pub fn masking_engine(&self) -> MaskingEngine {
-        MaskingEngine::new()
-    }
-
+    /// Queries persisted audit records.
     pub async fn query_audit(&self, filter: AuditFilter) -> GuardResult<Vec<AuditEntry>> {
         self.audit_reader.query(filter).await
     }
 
-    fn score_risk(&self, action: &str, resource: &str) -> f64 {
-        let mut score = 0.0;
-        let action_lower = action.to_ascii_lowercase();
-        if action_lower.contains("write") || action_lower.contains("update") {
-            score += self.config.risk_thresholds.write_weight;
-        }
-        if action_lower.contains("delete") {
-            score += self.config.risk_thresholds.delete_weight;
-        }
-        if self
-            .config
-            .sensitive_resources
-            .iter()
-            .any(|sensitive| sensitive == resource)
-        {
-            score += self.config.risk_thresholds.sensitive_weight;
-        }
-        let hour = Local::now().hour();
-        if !(8..18).contains(&hour) {
-            score += self.config.risk_thresholds.off_hours_weight;
-        }
-        score.min(1.0)
-    }
-
     async fn write_audit(
         &self,
-        session: Option<&ClawSession>,
-        action: &str,
-        resource: &str,
-        result: &AccessResult,
+        mut entry: AuditEntry,
+        decision: &PolicyDecision,
         risk_score: f64,
-        ts: chrono::DateTime<Utc>,
     ) -> GuardResult<()> {
-        let (decision, reason) = match result {
-            AccessResult::Allowed => ("allow".to_owned(), None),
-            AccessResult::Denied { reason } => ("deny".to_owned(), Some(reason.clone())),
-            AccessResult::Masked { fields } => (
-                "mask".to_owned(),
-                Some(
-                    fields
-                        .iter()
-                        .map(|field| field.field_pattern.clone())
-                        .collect::<Vec<_>>()
-                        .join(","),
-                ),
-            ),
-        };
-        let metadata = serde_json::json!({
-            "masked_fields": match result {
-                AccessResult::Masked { fields } => fields.iter().map(|field| field.field_pattern.clone()).collect::<Vec<_>>(),
-                _ => Vec::<String>::new(),
+        match decision {
+            PolicyDecision::Allow => {
+                entry.decision = "Allow".to_owned();
             }
-        });
-        self.audit_writer
-            .write(AuditEntry {
-                id: Uuid::new_v4(),
-                session_id: session.map(|item| item.session_id),
-                agent_id: session.map(|item| item.agent_id).unwrap_or_else(Uuid::nil),
-                action: action.to_owned(),
-                resource: resource.to_owned(),
-                resource_id: None,
-                decision,
-                reason,
-                risk_score,
-                metadata,
-                ts,
-            })
-            .await
+            PolicyDecision::Deny { reason } => {
+                entry.decision = "Deny".to_owned();
+                entry.reason = Some(reason.clone());
+            }
+            PolicyDecision::Mask { fields } => {
+                entry.decision = "Mask".to_owned();
+                entry.metadata = serde_json::json!({ "fields": fields });
+            }
+        }
+        entry.risk_score = risk_score;
+
+        match self.audit.write(entry.clone()).await {
+            Ok(()) => Ok(()),
+            Err(_) => write_direct(&self.pool, &entry).await,
+        }
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::fs;
-
-    use tempfile::TempDir;
-
-    use super::*;
-    use crate::config::{RiskThresholds, ZeroizeString};
-
-    async fn setup_guard(policy_toml: &str) -> (Guard, TempDir) {
-        let temp_dir = TempDir::new().expect("temp dir should exist");
-        let policy_dir = temp_dir.path().join("policies");
-        fs::create_dir_all(&policy_dir).expect("policy dir should exist");
-        fs::write(policy_dir.join("base.toml"), policy_toml).expect("policy should be written");
-        let config = GuardConfig {
-            db_path: temp_dir
-                .path()
-                .join("guard.db")
-                .to_string_lossy()
-                .to_string(),
-            jwt_secret: ZeroizeString::new("secret"),
-            policy_dir: policy_dir.clone(),
-            tls_cert_path: temp_dir.path().join("server.crt"),
-            tls_key_path: temp_dir.path().join("server.key"),
-            risk_thresholds: RiskThresholds::default(),
-            sensitive_resources: vec!["finance_records".to_owned()],
-            audit_flush_interval_ms: 25,
-            audit_batch_size: 8,
-        };
-        (
-            Guard::new(config).await.expect("guard should build"),
-            temp_dir,
-        )
-    }
-
-    #[tokio::test]
-    async fn check_access_allow_deny_and_mask() {
-        let policy = r#"
-name = "base"
-priority = 100
-
-[[rules]]
-type = "allow_if"
-condition = { role_in = ["analyst"], resource_is = "docs" }
-
-[[rules]]
-type = "deny_if"
-condition = { task_matches = "scheduling", resource_is = "finance_records" }
-reason = "finance blocked during scheduling"
-
-[[rules]]
-type = "mask_field"
-field_pattern = "$.ssn"
-mask_type = "redact"
-"#;
-        let (guard, _temp_dir) = setup_guard(policy).await;
-        let session = guard
-            .session_manager
-            .create_session(Uuid::new_v4(), "analyst", vec!["tool:*".to_owned()], 120)
-            .await
-            .expect("session should be created");
-
-        let allowed = guard
-            .check_access_with_task(&session.token, "read", "docs", "reporting")
-            .await
-            .expect("allow check should succeed");
-        assert_eq!(allowed, AccessResult::Allowed);
-
-        let denied = guard
-            .check_access_with_task(&session.token, "read", "finance_records", "scheduling")
-            .await
-            .expect("deny check should succeed");
-        assert_eq!(
-            denied,
-            AccessResult::Denied {
-                reason: "finance blocked during scheduling".to_owned()
-            }
-        );
-
-        let masked = guard
-            .check_access_with_task(&session.token, "read", "customers", "reporting")
-            .await
-            .expect("mask check should succeed");
-        assert_eq!(
-            masked,
-            AccessResult::Masked {
-                fields: vec![MaskDirective {
-                    field_pattern: "$.ssn".to_owned(),
-                    mask_type: crate::masking::MaskType::Redact,
-                }],
-            }
-        );
-    }
-}
+#[allow(dead_code)]
+fn _keep_path_used(_path: &Path) {}

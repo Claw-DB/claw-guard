@@ -1,117 +1,59 @@
-use crate::error::{GuardError, GuardResult};
-use std::ops::{Deref, DerefMut};
+use std::fmt;
 use std::path::PathBuf;
-use zeroize::Zeroize;
 
-#[derive(Clone, Default, PartialEq, Eq)]
-pub struct ZeroizeString(pub String);
+use secrecy::SecretString;
 
-impl ZeroizeString {
-    pub fn new(s: impl Into<String>) -> Self {
-        ZeroizeString(s.into())
-    }
-}
+use crate::error::{GuardError, GuardResult};
 
-impl std::fmt::Debug for ZeroizeString {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("[REDACTED]")
-    }
-}
-
-impl Deref for ZeroizeString {
-    type Target = String;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for ZeroizeString {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl Drop for ZeroizeString {
-    fn drop(&mut self) {
-        self.0.zeroize();
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct RiskThresholds {
-    pub write_weight: f64,
-    pub delete_weight: f64,
-    pub sensitive_weight: f64,
-    pub off_hours_weight: f64,
-    pub deny_threshold: f64,
-}
-
-impl Default for RiskThresholds {
-    fn default() -> Self {
-        Self {
-            write_weight: 0.25,
-            delete_weight: 0.4,
-            sensitive_weight: 0.35,
-            off_hours_weight: 0.2,
-            deny_threshold: 0.9,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
+/// Runtime configuration for the ClawDB guard engine.
+#[derive(Clone)]
 pub struct GuardConfig {
-    pub db_path: String,
-    pub jwt_secret: ZeroizeString,
-    pub policy_dir: PathBuf,
-    pub tls_cert_path: PathBuf,
-    pub tls_key_path: PathBuf,
-    pub risk_thresholds: RiskThresholds,
+    /// SQLite database file path or connection string.
+    pub db_path: PathBuf,
+    /// HS256 secret used for signing and validating session JWTs.
+    pub jwt_secret: SecretString,
+    /// Optional directory containing TOML policy definitions.
+    pub policy_dir: Option<PathBuf>,
+    /// Sensitive resources that increase risk scores.
     pub sensitive_resources: Vec<String>,
+    /// Maximum time to buffer audit entries before flushing.
     pub audit_flush_interval_ms: u64,
+    /// Maximum number of buffered audit entries per flush.
     pub audit_batch_size: usize,
+    /// Inclusive start of business hours in local time.
+    pub business_hours_start_hour: u8,
+    /// Exclusive end of business hours in local time.
+    pub business_hours_end_hour: u8,
+}
+
+impl fmt::Debug for GuardConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GuardConfig")
+            .field("db_path", &self.db_path)
+            .field("jwt_secret", &"***REDACTED***")
+            .field("policy_dir", &self.policy_dir)
+            .field("sensitive_resources", &self.sensitive_resources)
+            .field("audit_flush_interval_ms", &self.audit_flush_interval_ms)
+            .field("audit_batch_size", &self.audit_batch_size)
+            .field("business_hours_start_hour", &self.business_hours_start_hour)
+            .field("business_hours_end_hour", &self.business_hours_end_hour)
+            .finish()
+    }
 }
 
 impl GuardConfig {
+    /// Builds configuration from `CLAW_GUARD_*` environment variables.
     pub fn from_env() -> GuardResult<Self> {
-        let db_path =
-            std::env::var("CLAW_GUARD_DB_PATH").unwrap_or_else(|_| "claw_guard.db".to_owned());
-        let jwt_secret = ZeroizeString::new(
-            std::env::var("CLAW_GUARD_JWT_SECRET")
-                .map_err(|_| GuardError::Config("CLAW_GUARD_JWT_SECRET is required".to_owned()))?,
-        );
-        let policy_dir = PathBuf::from(
-            std::env::var("CLAW_GUARD_POLICY_DIR").unwrap_or_else(|_| "policies".to_owned()),
-        );
-        let tls_cert_path = PathBuf::from(
-            std::env::var("CLAW_GUARD_TLS_CERT_PATH")
-                .unwrap_or_else(|_| "certs/server.crt".to_owned()),
-        );
-        let tls_key_path = PathBuf::from(
-            std::env::var("CLAW_GUARD_TLS_KEY_PATH")
-                .unwrap_or_else(|_| "certs/server.key".to_owned()),
-        );
-        let thresholds = RiskThresholds {
-            write_weight: parse_env_f64(
-                "CLAW_GUARD_RISK_THRESHOLDS_WRITE_WEIGHT",
-                RiskThresholds::default().write_weight,
-            )?,
-            delete_weight: parse_env_f64(
-                "CLAW_GUARD_RISK_THRESHOLDS_DELETE_WEIGHT",
-                RiskThresholds::default().delete_weight,
-            )?,
-            sensitive_weight: parse_env_f64(
-                "CLAW_GUARD_RISK_THRESHOLDS_SENSITIVE_WEIGHT",
-                RiskThresholds::default().sensitive_weight,
-            )?,
-            off_hours_weight: parse_env_f64(
-                "CLAW_GUARD_RISK_THRESHOLDS_OFF_HOURS_WEIGHT",
-                RiskThresholds::default().off_hours_weight,
-            )?,
-            deny_threshold: parse_env_f64(
-                "CLAW_GUARD_RISK_THRESHOLDS_DENY_THRESHOLD",
-                RiskThresholds::default().deny_threshold,
-            )?,
-        };
+        let jwt_secret = std::env::var("CLAW_GUARD_JWT_SECRET")
+            .map(|value| SecretString::new(value.into_boxed_str()))
+            .map_err(|_| GuardError::ConfigError("CLAW_GUARD_JWT_SECRET is required".to_owned()))?;
+        let db_path = std::env::var("CLAW_GUARD_DB_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("claw_guard.db"));
+        let policy_dir = std::env::var("CLAW_GUARD_POLICY_DIR")
+            .ok()
+            .map(PathBuf::from)
+            .filter(|value| !value.as_os_str().is_empty());
         let sensitive_resources = std::env::var("CLAW_GUARD_SENSITIVE_RESOURCES")
             .unwrap_or_default()
             .split(',')
@@ -120,54 +62,41 @@ impl GuardConfig {
                 (!trimmed.is_empty()).then(|| trimmed.to_owned())
             })
             .collect();
-        let audit_flush_interval_ms = parse_env_u64("CLAW_GUARD_AUDIT_FLUSH_INTERVAL_MS", 100)?;
-        let audit_batch_size = parse_env_usize("CLAW_GUARD_AUDIT_BATCH_SIZE", 500)?;
 
         Ok(Self {
             db_path,
             jwt_secret,
             policy_dir,
-            tls_cert_path,
-            tls_key_path,
-            risk_thresholds: thresholds,
             sensitive_resources,
-            audit_flush_interval_ms,
-            audit_batch_size,
+            audit_flush_interval_ms: parse_or_default("CLAW_GUARD_AUDIT_FLUSH_INTERVAL_MS", 100)?,
+            audit_batch_size: parse_or_default("CLAW_GUARD_AUDIT_BATCH_SIZE", 500)?,
+            business_hours_start_hour: parse_or_default("CLAW_GUARD_BUSINESS_HOURS_START", 8)?,
+            business_hours_end_hour: parse_or_default("CLAW_GUARD_BUSINESS_HOURS_END", 18)?,
         })
     }
 
+    /// Returns a SQLite connection string for `sqlx`.
     pub fn sqlite_connection_string(&self) -> String {
-        if self.db_path.starts_with("sqlite:") {
-            self.db_path.clone()
+        let path = self.db_path.to_string_lossy();
+        if path == ":memory:" {
+            "sqlite::memory:".to_owned()
+        } else if path.starts_with("sqlite:") {
+            path.into_owned()
         } else {
-            format!("sqlite://{}?mode=rwc", self.db_path)
+            format!("sqlite://{}?mode=rwc", path)
         }
     }
 }
 
-fn parse_env_f64(name: &str, default: f64) -> GuardResult<f64> {
+fn parse_or_default<T>(name: &str, default: T) -> GuardResult<T>
+where
+    T: std::str::FromStr,
+    T::Err: fmt::Display,
+{
     match std::env::var(name) {
         Ok(value) => value
-            .parse::<f64>()
-            .map_err(|error| GuardError::Config(format!("invalid {name}: {error}"))),
-        Err(_) => Ok(default),
-    }
-}
-
-fn parse_env_u64(name: &str, default: u64) -> GuardResult<u64> {
-    match std::env::var(name) {
-        Ok(value) => value
-            .parse::<u64>()
-            .map_err(|error| GuardError::Config(format!("invalid {name}: {error}"))),
-        Err(_) => Ok(default),
-    }
-}
-
-fn parse_env_usize(name: &str, default: usize) -> GuardResult<usize> {
-    match std::env::var(name) {
-        Ok(value) => value
-            .parse::<usize>()
-            .map_err(|error| GuardError::Config(format!("invalid {name}: {error}"))),
+            .parse::<T>()
+            .map_err(|error| GuardError::ConfigError(format!("invalid {name}: {error}"))),
         Err(_) => Ok(default),
     }
 }

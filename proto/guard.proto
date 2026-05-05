@@ -17,18 +17,20 @@ message CheckAccessResponse {
 
 message CreateSessionRequest {
     string agent_id = 1;
-    string role = 2;
-    repeated string scopes = 3;
-    int64 ttl_secs = 4;
+    string workspace_id = 2;
+    string role = 3;
+    repeated string scopes = 4;
+    int64 ttl_secs = 5;
 }
 
 message CreateSessionResponse {
     string session_id = 1;
     string agent_id = 2;
-    string role = 3;
-    repeated string scopes = 4;
-    string token = 5;
-    int64 expires_at = 6;
+    string workspace_id = 3;
+    string role = 4;
+    repeated string scopes = 5;
+    string token = 6;
+    int64 expires_at = 7;
 }
 
 message ValidateSessionRequest {
@@ -39,9 +41,10 @@ message ValidateSessionResponse {
     bool valid = 1;
     string session_id = 2;
     string agent_id = 3;
-    string role = 4;
-    repeated string scopes = 5;
-    int64 expires_at = 6;
+    string workspace_id = 4;
+    string role = 5;
+    repeated string scopes = 6;
+    int64 expires_at = 7;
 }
 
 message RevokeSessionRequest {
@@ -85,8 +88,8 @@ message RemovePolicyResponse {
 }
 
 message QueryAuditLogRequest {
-    string session_id = 1;
-    string agent_id = 2;
+    string workspace_id = 1;
+    string session_id = 2;
     string decision = 3;
     int64 start_ts = 4;
     int64 end_ts = 5;
@@ -97,15 +100,16 @@ message QueryAuditLogRequest {
 message AuditEntry {
     string id = 1;
     string session_id = 2;
-    string agent_id = 3;
-    string action = 4;
-    string resource = 5;
-    string resource_id = 6;
-    string decision = 7;
-    string reason = 8;
-    double risk_score = 9;
-    string metadata_json = 10;
-    int64 ts = 11;
+    string workspace_id = 3;
+    string agent_id = 4;
+    string action = 5;
+    string resource = 6;
+    string resource_id = 7;
+    string decision = 8;
+    string reason = 9;
+    double risk_score = 10;
+    string metadata_json = 11;
+    int64 ts = 12;
 }
 
 message QueryAuditLogResponse {
