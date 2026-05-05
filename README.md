@@ -1,169 +1,104 @@
 # claw-guard
 
-Policy-driven security, session management, and audit enforcement for ClawDB workloads.
+`claw-guard` is the security, session, and policy engine for ClawDB. It provides API key management, JWT-backed sessions, TOML policy loading, risk-aware authorization, batched audit logging, and field masking over a SQLite-backed control plane.
 
-claw-guard is a Rust crate and service that evaluates authorization decisions at runtime using role and scope context, task/resource metadata, and configurable risk scoring. It supports allow, deny, and mask outcomes, with durable audit logging and a gRPC interface for external integration.
+## Features
 
-## What This Crate Provides
+- API key creation, validation, revocation, and listing with BLAKE3 hashing.
+- Session issuance and validation with HS256 JWTs and revocation checks.
+- Policy evaluation with allow, deny, and mask rules loaded from SQLite or TOML files.
+- Batched audit persistence with filtering and CSV export.
+- JSON masking with redact, hash, truncate, email, and nested field masking strategies.
+- Optional gRPC service for remote authorization and administration.
 
-- Policy engine with TOML-defined rules (allow, deny, mask)
-- Session creation, validation, revocation, and pagination
-- Risk-aware access decisions based on action/resource/time-of-day heuristics
-- Mask directives for field-level data handling
-- Structured audit log writer/reader on SQLite
-- gRPC server exposing decisioning and admin APIs
-
-## Install
-
-Add to Cargo.toml:
+## Installation
 
 ```toml
 [dependencies]
-claw-guard = "0.1.1"
+claw-guard = "0.1.2"
 ```
-
-## Architecture Overview
-
-- Guard: top-level coordinator for policy engine, session manager, and audit components
-- PolicyEngine: loads and evaluates policy files from a directory
-- SessionManager: issues JWT-backed sessions and validates/revokes them
-- AuditWriter/AuditReader: records and queries access events
-- gRPC service: wraps the same Guard flows over a network API
 
 ## Configuration
 
-Configuration is loaded from environment variables using GuardConfig::from_env().
+`GuardConfig::from_env()` reads these variables:
 
-Required:
+- `CLAW_GUARD_JWT_SECRET` (required)
+- `CLAW_GUARD_DB_PATH` (default: `claw_guard.db`)
+- `CLAW_GUARD_POLICY_DIR` (optional)
+- `CLAW_GUARD_SENSITIVE_RESOURCES` (comma-separated)
+- `CLAW_GUARD_AUDIT_FLUSH_INTERVAL_MS` (default: `100`)
+- `CLAW_GUARD_AUDIT_BATCH_SIZE` (default: `500`)
+- `CLAW_GUARD_BUSINESS_HOURS_START` (default: `8`)
+- `CLAW_GUARD_BUSINESS_HOURS_END` (default: `18`)
 
-- CLAW_GUARD_JWT_SECRET: signing key for HS256 session tokens
-
-Optional:
-
-- CLAW_GUARD_DB_PATH (default: claw_guard.db)
-- CLAW_GUARD_POLICY_DIR (default: policies)
-- CLAW_GUARD_TLS_CERT_PATH (default: certs/server.crt)
-- CLAW_GUARD_TLS_KEY_PATH (default: certs/server.key)
-- CLAW_GUARD_SENSITIVE_RESOURCES (comma-separated)
-- CLAW_GUARD_AUDIT_FLUSH_INTERVAL_MS (default: 100)
-- CLAW_GUARD_AUDIT_BATCH_SIZE (default: 500)
-- CLAW_GUARD_RISK_THRESHOLDS_WRITE_WEIGHT (default: 0.25)
-- CLAW_GUARD_RISK_THRESHOLDS_DELETE_WEIGHT (default: 0.4)
-- CLAW_GUARD_RISK_THRESHOLDS_SENSITIVE_WEIGHT (default: 0.35)
-- CLAW_GUARD_RISK_THRESHOLDS_OFF_HOURS_WEIGHT (default: 0.2)
-- CLAW_GUARD_RISK_THRESHOLDS_DENY_THRESHOLD (default: 0.9)
-
-## Quick Start (Library)
+## Quick Start
 
 ```rust
-use claw_guard::{AccessResult, Guard, GuardConfig, ZeroizeString};
+use claw_guard::{Guard, GuardConfig, PolicyDecision};
+use secrecy::SecretString;
 use std::path::PathBuf;
-use uuid::Uuid;
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-	let config = GuardConfig {
-		db_path: "claw_guard.db".to_string(),
-		jwt_secret: ZeroizeString::new("replace-me"),
-		policy_dir: PathBuf::from("./policies"),
-		tls_cert_path: PathBuf::from("./certs/server.crt"),
-		tls_key_path: PathBuf::from("./certs/server.key"),
-		risk_thresholds: Default::default(),
-		sensitive_resources: vec!["finance_records".to_string()],
-		audit_flush_interval_ms: 100,
-		audit_batch_size: 500,
-	};
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let guard = Guard::new(GuardConfig {
+        db_path: PathBuf::from("claw_guard.db"),
+        jwt_secret: SecretString::new("replace-me".to_owned().into_boxed_str()),
+        policy_dir: Some(PathBuf::from("./policies")),
+        sensitive_resources: vec!["finance_records".to_owned()],
+        audit_flush_interval_ms: 100,
+        audit_batch_size: 500,
+        business_hours_start_hour: 8,
+        business_hours_end_hour: 18,
+    })
+    .await?;
 
-	let guard = Guard::new(config).await?;
+    let session = guard
+        .sessions()
+        .create_session(
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            "admin",
+            vec!["tool:*".to_owned()],
+            3600,
+        )
+        .await?;
 
-	let session = guard
-		.session_manager
-		.create_session(Uuid::new_v4(), "analyst", vec!["tool:*".into()], 3600)
-		.await?;
+    match guard.check_access(&session, "read", "users").await? {
+        PolicyDecision::Allow => println!("allowed"),
+        PolicyDecision::Deny { reason } => println!("denied: {reason}"),
+        PolicyDecision::Mask { fields } => println!("mask fields: {fields:?}"),
+    }
 
-	match guard
-		.check_access_with_task(&session.token, "read", "customer_records", "reporting")
-		.await?
-	{
-		AccessResult::Allowed => println!("allowed"),
-		AccessResult::Denied { reason } => println!("denied: {reason}"),
-		AccessResult::Masked { fields } => println!("masked fields: {}", fields.len()),
-	}
-
-	Ok(())
+    Ok(())
 }
 ```
 
-## Policy Format (TOML)
+## Policy Files
 
-Example policy file:
+Policy files support single-policy or multi-policy TOML documents. Example:
 
 ```toml
-name = "base"
-description = "baseline guard policy"
+[[policies]]
+name = "deny-finance-during-scheduling"
 priority = 100
 
-[[rules]]
-type = "allow_if"
-condition = { role_in = ["analyst"], resource_is = "docs" }
-
-[[rules]]
+[[policies.rules]]
 type = "deny_if"
-condition = { task_matches = "scheduling", resource_is = "finance_records" }
-reason = "finance blocked during scheduling"
-
-[[rules]]
-type = "mask_field"
-field_pattern = "$.ssn"
-mask_type = "redact"
+reason = "Finance data not accessible during scheduling tasks"
+[policies.rules.condition]
+and = [{ task_matches = "scheduling" }, { resource_is = "finance_records" }]
 ```
 
-## gRPC Server
+Supported condition operators are `task_matches`, `role_is`, `scope_contains`, `risk_above`, `resource_is`, `workspace_is`, `and`, `or`, and `not`.
 
-The crate ships with a binary:
-
-```bash
-cargo run --bin guard-server
-```
-
-Service methods (see proto/guard.proto):
-
-- CheckAccess
-- CreateSession
-- ValidateSession
-- RevokeSession
-- AddPolicy
-- ListPolicies
-- RemovePolicy
-- QueryAuditLog
-
-TLS cert and key paths are read from GuardConfig.
-
-## Data Model and Persistence
-
-- Uses SQLite via sqlx
-- Applies migrations from migrations/
-- Stores sessions, roles, policies, and audit events
-- Persists policy metadata while allowing filesystem policy loading and reload
-
-## Local Development
+## Development
 
 ```bash
-cargo fmt --check
+cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test
+cargo test --all-features
 ```
-
-For benchmark runs:
-
-```bash
-cargo bench
-```
-
-## Versioning
-
-Current version: 0.1.1
 
 ## License
 
-MIT. See LICENSE.
+Apache-2.0. See `LICENSE`.
